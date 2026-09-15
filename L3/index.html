@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <title>L3 光照球体与轨道相机</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      background: #0b0d10;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="gl"></canvas>
+  <!-- importmap 必须出现在任何模块脚本之前，且一个文档只能有一个 -->
+  <script type="importmap">
+    {
+      "imports": {
+        "gl-matrix": "https://cdn.jsdelivr.net/npm/gl-matrix@3.4.4/+esm"
+      }
+    }
+  </script>
+  <script type="module" src="./main.js">
+  </script>
+</body>
+
+</html>
