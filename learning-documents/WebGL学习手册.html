@@ -1743,6 +1743,49 @@ render();
 &lt;/html&gt;</code></pre>
 </div>
 
+<div class="concept">
+<p><b>VBO 与 VAO 是什么</b>：这两个名字看着唬人，分工其实很朴素。<b>VBO 是显存里存放顶点数据的容器，VAO 是"怎么读这块数据"的配置清单</b>。记住这一句，L1 里那七八行代码就全通了。</p>
+
+<p><b>VBO（顶点缓冲对象）</b>：本质是显存里的一段连续内存，用来放顶点数据。</p>
+<ul>
+<li><b>为什么必须放到显存</b>：GPU 没法直接读 JS 里的 <code>Float32Array</code>，那在 CPU 内存里。若每次绘制都从 CPU 传一遍，带宽会直接爆掉。算笔账：一万个物体、每个一万个顶点、每顶点 32 字节，一帧就是 3.2 GB 的传输量，而你每秒要传 60 次。所以做法是<b>一次性上传，之后只告诉 GPU "用哪块数据"</b>。</li>
+<li><code>gl.createBuffer()</code> 创建容器，<code>gl.bufferData(...)</code> 把数据传进去。注意传数据前必须先 <code>bindBuffer</code>，因为 <code>bufferData</code> 操作的永远是"当前绑定的那个缓冲"。</li>
+<li>第三个参数 <code>STATIC_DRAW</code> 是给驱动的提示："这块数据基本不改"，驱动据此把它放到更优的位置。<code>DYNAMIC_DRAW</code> 则用于每帧都会变的数据。</li>
+<li>WebGL 2 里<b>没有"直接把数组交给 drawArrays"这种用法</b>（旧式客户端顶点数组已被移除），所有顶点数据都必须经过 VBO。这就是为什么只画一个三角形也要建缓冲。</li>
+</ul>
+
+<p><b>VAO（顶点数组对象）</b>：存放"属性读取规则"的容器。</p>
+<p>光有数据不够，GPU 还得知道怎么解读这串字节。比如"从第 0 字节开始取 3 个 float 当位置，再跳过 12 字节取 3 个当颜色"，这套规则由 <code>vertexAttribPointer</code> 描述。VAO 的作用就是<b>把这套规则整体存下来，用的时候一次恢复</b>。</p>
+<ul>
+<li>没有 VAO 时：每次画一个物体都要重跑一遍 <code>vertexAttribPointer</code> 加 <code>enableVertexAttribArray</code>。两个属性是 4 次调用，三个属性是 6 次。场景里 500 个物体，每帧就是数千次调用。</li>
+<li>有 VAO 之后：一次 <code>gl.bindVertexArray(vao)</code> 恢复全部配置，接着直接 draw。<b>这就是 VAO 存在的全部理由</b>。</li>
+</ul>
+
+<p><b>两者的关系</b>：VAO 存"配置"，VBO 存"数据"，配置指向数据。类比一下：VBO 像仓库里的一排货架，VAO 像控制台上的预设档位，按下某个档位，所有"从哪个货架、哪个位置、取多少"的设置一次性就位。</p>
+
+<div class="tw">
+<table>
+<thead><tr><th>对象</th><th>存什么</th><th>绑定用的 API</th></tr></thead>
+<tbody>
+<tr><td><code>VBO</code></td><td>顶点数据本身（位置、颜色、UV…）</td><td><code>bindBuffer(ARRAY_BUFFER, vbo)</code></td></tr>
+<tr><td><code>EBO</code></td><td>索引数据（顶点下标序列）</td><td><code>bindBuffer(ELEMENT_ARRAY_BUFFER, ebo)</code></td></tr>
+<tr><td><code>VAO</code></td><td>属性读取规则的整体快照</td><td><code>bindVertexArray(vao)</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<p><b>VAO 记录什么、不记录什么</b>：这条必须记准，否则会遇到"改了数据却影响另一个模型"的怪事。</p>
+<ul>
+<li><b>会记录</b>：每个属性的位置、分量数、类型、是否归一化、步长、偏移；哪些属性被 enable 了；以及 <code>ELEMENT_ARRAY_BUFFER</code>（索引缓冲）的绑定。</li>
+<li><b>不会记录</b>：<code>ARRAY_BUFFER</code> 的绑定。VAO 记的是"数据长什么样"，不是"当前绑定的是哪个 VBO"。</li>
+</ul>
+<p>所以绑定另一个 VBO 再调用 <code>bufferData</code>，并不会破坏已配置好的 VAO。</p>
+
+<p><b>为什么最后要 <code>bindVertexArray(null)</code></b>：因为 VAO 会记录属性配置，如果在某个 VAO 绑定期间调用 <code>vertexAttribPointer</code>，就会改到那个 VAO 上。画完解绑是个防御性习惯，避免后面配置下一个物体时"误伤"上一个。</p>
+
+<p><b>这背后是 WebGL 的核心心智模型：状态机</b>。它没有"对象方法"的写法，你不写 <code>buffer.setData(...)</code>，而是先 <code>bindBuffer(槽位, buffer)</code> 把对象放到槽位上，再调用 <code>bufferData(...)</code> 去操作"当前槽位上的那个对象"。整个 WebGL 的 API 都是这个套路：<b>先绑定，再操作</b>。理解这一点，所有 API 的用法你就都能自己推出来。</p>
+</div>
+
 <div class="tip"><b>跑通后做三个实验</b>：① 把 <code>gl_Position</code> 改成 <code>vec4(aPosition * 0.5, 1.0)</code>，三角形应缩小一半；② 把片元输出改成固定色 <code>vec4(1.0, 0.5, 0.2, 1.0)</code>，顶点色插值消失；③ 把 <code>drawArrays</code> 的 count 改成 2，会发现什么都画不出来（图元不完整会被丢弃）。这三个实验把"顶点属性—插值—图元"三件事钉死。</div>
 
 <h3 id="ch5-2">L2 · 纹理立方体与 MVP 变换</h3>
