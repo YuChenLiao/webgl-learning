@@ -51,3 +51,43 @@ void main() {
   outColor = vec4(pow(color, vec3(1.0 / 2.2)), 1.0);       // 伽马编码后输出
 }
 `;
+
+export const POST_VERT = `#version 300 es
+in vec2 aPosition;
+out vec2 vUv;
+void main() {
+  vUv = aPosition * 0.5 + 0.5;        // 裁剪空间 [-1,1] → 纹理坐标 [0,1]
+  gl_Position = vec4(aPosition, 0.0, 1.0);
+}`;
+
+export const POST_FRAG = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uScene;
+uniform vec2 uResolution;
+uniform float uVignette;      // 暗角强度
+uniform float uAberration;    // 色差强度
+
+out vec4 outColor;
+
+void main() {
+  vec2 uv = vUv;
+
+  // ---- 径向色差：R/G/B 三个通道按不同缩放采样 ----
+  vec2 dir = uv - 0.5;
+  float r = texture(uScene, uv - dir * uAberration).r;
+  float g = texture(uScene, uv).g;
+  float b = texture(uScene, uv + dir * uAberration).b;
+  vec3 color = vec3(r, g, b);
+
+  // ---- 暗角：距离中心越远越暗 ----
+  float d = length(dir);
+  float vignette = smoothstep(0.85, 0.25, d);
+  color *= mix(1.0, vignette, uVignette);
+
+  // ---- 灰度混合（示例：饱和度 0.75，保留一点颜色）----
+  float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+  color = mix(color, vec3(luma), 0.25);
+
+  outColor = vec4(color, 1.0);
+}`

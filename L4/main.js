@@ -3,7 +3,8 @@ import { mat4, mat3 } from 'gl-matrix';
 import OrbitCamera from './utils/camera.js'
 import { createProgram } from './compile/compile.js';
 import createSphereGeometry from './utils/ball.js';
-import { VERT, FRAG } from './gl/gl.js';
+import { createFullscreenTriangle } from './utils/fullscreen-triangle.js';
+import { VERT, FRAG, POST_FRAG, POST_VERT } from './gl/gl.js';
 
 const canvas = document.getElementById('gl');
 const gl = canvas.getContext('webgl2', { alpha: false, antialias: true });
@@ -23,7 +24,63 @@ resize();
 gl.enable(gl.DEPTH_TEST);    // 球体要正确遮挡，必须开深度测试
 gl.enable(gl.CULL_FACE);
 
+// L4 有两个 program：program 画场景（L3 的），postProgram 做后处理
+const postProgram = createProgram(POST_VERT, POST_FRAG);
+
+// 不要假设全屏三角形的属性位置一定是 0，查出来更稳妥
+const aFullscreenPos = gl.getAttribLocation(postProgram, 'aPosition');
+const rts = [];    // 两个 render target 可做乒乓（模糊来回采样时用）
+function resizeTargets() {
+  rts.forEach((rt) => {
+    gl.deleteFramebuffer(rt.framebuffer);
+    gl.deleteTexture(rt.colorTexture);
+    gl.deleteRenderbuffer(rt.depthBuffer);
+  });
+  rts.length = 0;
+  // 离屏分辨率可以低于屏幕，后处理对分辨率不敏感时能省大量填充率
+  rts.push(createRenderTarget(gl, canvas.width, canvas.height));
+  rts.push(createRenderTarget(gl, canvas.width, canvas.height));
+}
+
+const fullscreenVao = createFullscreenTriangle(gl);
+
+function renderFrame(time) {
+  // ---------- Pass 1：场景 → 离屏纹理 ----------
+  gl.bindFramebuffer(gl.FRAMEBUFFER, rts[0].framebuffer);
+  gl.viewport(0, 0, rts[0].width, rts[0].height);
+  gl.enable(gl.DEPTH_TEST);
+  gl.clearColor(0.043, 0.051, 0.063, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  renderScene(time);                    // 前面案例里的球体绘制
+
+  // ---------- Pass 2：后处理 → 屏幕 ----------
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.disable(gl.DEPTH_TEST);            // 全屏绘制不需要深度
+  gl.disable(gl.CULL_FACE);             // 全屏三角形的绕序无所谓，但关掉更保险
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  gl.useProgram(postProgram);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, rts[0].colorTexture);
+  gl.uniform1i(postUniforms.uScene, 0);
+  gl.uniform2f(postUniforms.uResolution, canvas.width, canvas.height);
+  gl.uniform1f(postUniforms.uVignette, 0.65);
+  gl.uniform1f(postUniforms.uAberration, 0.004);
+
+  gl.bindVertexArray(fullscreenVao);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+const postUniforms = {
+  uScene: gl.getUniformLocation(postProgram, 'uScene'),
+  uResolution: gl.getUniformLocation(postProgram, 'uResolution'),
+  uVignette: gl.getUniformLocation(postProgram, 'uVignette'),
+  uAberration: gl.getUniformLocation(postProgram, 'uAberration'),
+};
+
 const program = createProgram(gl, VERT, FRAG);
+
 gl.useProgram(program);
 
 const geometry = createSphereGeometry(1.4, 64, 40);
@@ -122,6 +179,8 @@ const uAmbientColor = gl.getUniformLocation(program, 'uAmbientColor');
 const model = mat4.create(), view = mat4.create(), projection = mat4.create();
 const viewProjection = mat4.create();
 const normalMatrix = mat3.create();
+
+
 
 // 光源绕场景做圆周运动，便于观察光照变化
 const lightPos = [0, 3, 3];
