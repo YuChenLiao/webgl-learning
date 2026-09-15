@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>L1 三角形</title>
+  <title>L4 · 离屏渲染与后处理链</title>
   <style>
     html,
     body {
@@ -23,6 +23,14 @@
 
 <body>
   <canvas id="gl"></canvas>
+  <!-- importmap 必须出现在任何模块脚本之前，且一个文档只能有一个 -->
+  <script type="importmap">
+    {
+      "imports": {
+        "gl-matrix": "https://cdn.jsdelivr.net/npm/gl-matrix@3.4.4/+esm"
+      }
+    }
+  </script>
   <script type="module" src="./main.js">
   </script>
 </body>

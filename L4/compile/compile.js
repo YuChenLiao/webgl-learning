@@ -1,4 +1,4 @@
-export function compile(gl, type, source) {
+export default function compile(gl, type, source) {
   const shader = gl.createShader(type);
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
@@ -8,7 +8,7 @@ export function compile(gl, type, source) {
   return shader;
 }
 
-export default function createProgram(gl, vsSource, fsSource) {
+export function createProgram(gl, vsSource, fsSource) {
   const vs = compile(gl, gl.VERTEX_SHADER, vsSource);
   const fs = compile(gl, gl.FRAGMENT_SHADER, fsSource);
   const program = gl.createProgram();
