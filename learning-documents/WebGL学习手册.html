@@ -2399,6 +2399,33 @@ requestAnimationFrame(render);
 <h3 id="ch5-4">L4 · 离屏渲染与后处理链</h3>
 <p><strong>目标</strong>：用帧缓冲把场景渲到纹理，再走两遍后处理合成到屏幕。掌握这一关，阴影贴图、泛光、景深、拾取就都只是"换个着色器"的事。</p>
 
+<div class="concept">
+<p><b>这一关在做什么：把"画到屏幕"改成"先画到一张纹理"</b>。前三个案例都是直接渲染到屏幕，L4 第一次让渲染结果经过二次加工。这是渲染管线里一个重要的转折点。</p>
+<p><b>为什么非要多这一步</b>：有些效果根本无法在一次绘制里完成。比如模糊，某个像素的最终颜色取决于它周围的像素，但你画这个像素时，周围的还没画完，读不到。再比如暗角、色差、色调映射，都需要"整幅画面都画完之后再统一处理一遍"。</p>
+<p>还有一个更根本的限制：<b>屏幕是只写不读的</b>。你不能一边往屏幕上画、一边读取屏幕像素，那会形成反馈循环。所以必须有一个中间目标存下第一遍的结果。</p>
+<p><b>打个比方</b>：L1 到 L3 是直接拿画笔在纸上画；L4 是先用相机拍一张照片（Pass 1），再用修图软件给照片套滤镜、加暗角（Pass 2），最后导出。<b>滤镜作用于整张照片，而不是画上去的每一笔</b>，这个差别就是后处理的本质。</p>
+<p><b>核心机制是帧缓冲对象（FBO）</b>：平时 GPU 画到"默认帧缓冲"（屏幕），你可以自己造一个帧缓冲，让它画到一张自定义纹理上。这张纹理之后就能像普通贴图一样被采样。L4 里 <code>createRenderTarget</code> 挂两个附件，它们的选型有讲究：</p>
+<ul>
+<li><b>颜色附件用纹理</b>：因为 Pass 2 要采样它，必须是纹理。内部格式 <code>RGBA8</code> 表示每像素 4 字节。</li>
+<li><b>深度附件用 renderbuffer</b>：Pass 1 画球体需要深度测试，否则球体前后会错乱；但深度数据不需要被采样，用 renderbuffer 更省内存。</li>
+</ul>
+<p>记住这条判断依据：<b>会被采样的用纹理，只当缓冲区用的用 renderbuffer</b>。</p>
+<div class="tw">
+<table>
+<thead><tr><th>阶段</th><th>做什么</th><th>状态要求</th></tr></thead>
+<tbody>
+<tr><td><b>Pass 1</b> 场景到离屏</td><td>绑定 FBO → 视口设为纹理尺寸 → 清颜色与深度 → 画球体</td><td>开深度测试（球体要正确遮挡）</td></tr>
+<tr><td><b>Pass 2</b> 后处理到屏幕</td><td>绑定屏幕 → 视口设为画布尺寸 → 画一个全屏三角形 → 采样 Pass 1 的纹理加工后输出</td><td><b>关深度测试</b>（全屏平面不需要深度，开着可能被整块丢弃导致黑屏）</td></tr>
+</tbody>
+</table>
+</div>
+<p><b>全屏三角形的技巧</b>：三个顶点 <code>(-1,-1)</code>、<code>(3,-1)</code>、<code>(-1,3)</code> 直接写在裁剪空间。后两个坐标故意超出 [-1,1]，超出部分会被 GPU 自动裁掉，剩下的正好铺满屏幕。不用两个三角形拼四边形，是因为那样多一次图元装配，还可能出现接缝，一个大三角形更省也更干净。</p>
+<p><b>后处理着色器做三件事</b>：色差（RGB 三通道按略微不同的方向偏移采样，模拟镜头色散）、暗角（按到中心的距离衰减，越靠边越暗）、灰度（按感知亮度权重压灰再混回，降低饱和度）。三者都不改变几何，只改颜色。</p>
+<p><b>为什么离屏纹理的 wrap 必须用 CLAMP_TO_EDGE</b>：后处理采样时坐标可能略微超出 [0,1]，若用 <code>REPEAT</code> 会绕回对面取色，画面边缘就会出现对面颜色的条纹。这是本关最容易踩的坑。</p>
+<p><b>这一关真正的收获是"渲染到纹理"这个能力</b>，后处理只是它最直观的应用。往下延伸，阴影贴图（从光源视角渲染深度）、平面反射（镜像相机渲染一张图贴到地面）、拾取（渲染 ID 颜色）、GPGPU（用片元着色器做通用计算），全都是同一个套路。</p>
+<p><b>与 L3 的关系</b>：L4 = L3 + 一层离屏处理。球体几何、光照着色器、轨道相机<b>完全不用改</b>，改动只有三处：新增离屏目标、新增后处理着色器与全屏三角形、把渲染循环改成两个 Pass。下面按这三处给出完整代码。</p>
+</div>
+
 <div class="code">
 <div class="code-bar"><span class="lang">js</span><span class="file">离屏目标 + 全屏三角形</span><span class="sp"></span></div>
 <pre><code data-lang="js">function createRenderTarget(gl, width, height) {
@@ -2524,6 +2551,77 @@ function renderFrame(time) {
   gl.bindVertexArray(fullscreenVao);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }</code></pre>
+</div>
+
+<div class="code">
+<div class="code-bar"><span class="lang">js</span><span class="file">组装：L4 相对 L3 的三处改动</span><span class="sp"></span></div>
+<pre><code data-lang="js">// ================= 改动 1：后处理的全屏三角形顶点着色器 =================
+// 顶点已经在裁剪空间，所以不需要任何矩阵；只要把坐标顺手换算成 UV 传下去
+const POST_VERT = `#version 300 es
+in vec2 aPosition;
+out vec2 vUv;
+void main() {
+  vUv = aPosition * 0.5 + 0.5;        // 裁剪空间 [-1,1] → 纹理坐标 [0,1]
+  gl_Position = vec4(aPosition, 0.0, 1.0);
+}`;
+
+// POST_FRAG 就是上面"后处理着色器"代码块里的内容，原样作为字符串粘贴
+
+// ================= 改动 2：创建后处理程序与全屏 VAO =================
+// L4 有两个 program：program 画场景（L3 的），postProgram 做后处理
+const postProgram = createProgram(POST_VERT, POST_FRAG);
+
+// 不要假设全屏三角形的属性位置一定是 0，查出来更稳妥
+const aFullscreenPos = gl.getAttribLocation(postProgram, 'aPosition');
+// 把 createFullscreenTriangle 内部的两处 0 改成这个参数
+const fullscreenVao = createFullscreenTriangle(gl, aFullscreenPos);
+
+const postUniforms = {
+  uScene: gl.getUniformLocation(postProgram, 'uScene'),
+  uResolution: gl.getUniformLocation(postProgram, 'uResolution'),
+  uVignette: gl.getUniformLocation(postProgram, 'uVignette'),
+  uAberration: gl.getUniformLocation(postProgram, 'uAberration'),
+};
+
+// ================= 改动 3：把 L3 的绘制逻辑抽成 renderScene =================
+// 与 L3 的唯一区别：不清屏、不调用 requestAnimationFrame（这两件事改由 Pass 1 和主循环负责）
+function renderScene(time) {
+  const t = time * 0.001;
+  lightPos[0] = Math.sin(t * 0.9) * 4;
+  lightPos[2] = Math.cos(t * 0.9) * 4;
+
+  mat4.identity(model);
+  const cameraPos = camera.update(view);
+  mat4.perspective(projection, Math.PI / 4, canvas.width / canvas.height, 0.1, 100);
+  mat4.multiply(viewProjection, projection, view);
+  mat3.normalFromMat4(normalMatrix, model);
+
+  gl.useProgram(program);
+  gl.uniformMatrix4fv(uniforms.uModelMatrix, false, model);
+  gl.uniformMatrix4fv(uniforms.uViewProjectionMatrix, false, viewProjection);
+  gl.uniformMatrix3fv(uniforms.uNormalMatrix, false, normalMatrix);
+  gl.uniform3fv(uniforms.uLightPos, lightPos);
+  gl.uniform3f(uniforms.uLightColor, 1.0, 0.96, 0.9);
+  gl.uniform3fv(uniforms.uCameraPos, cameraPos);
+  gl.uniform3f(uniforms.uAmbientColor, 0.06, 0.07, 0.09);
+
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.uniform1i(uniforms.uBaseMap, 0);
+
+  gl.bindVertexArray(vao);
+  gl.drawElements(gl.TRIANGLES, indexCount, gl.UNSIGNED_SHORT, 0);
+  gl.bindVertexArray(null);
+}
+
+// ================= 启动与尺寸变化 =================
+resizeTargets();                       // 创建离屏目标（尺寸跟随 canvas）
+requestAnimationFrame(renderFrame);
+
+window.addEventListener('resize', () => {
+  resize();                            // L3 里的函数：更新 canvas 尺寸与视口
+  resizeTargets();                     // 离屏纹理必须跟着重建，否则尺寸不匹配、画面错位
+});</code></pre>
 </div>
 
 <div class="warn"><b>后处理常见三个坑</b>：<br>① 全屏着色器里 uv 用了 <code>gl_FragCoord.xy / uResolution</code>，但<strong>忘记把纹理的 wrap 设成 CLAMP_TO_EDGE</strong>，导致边缘出现从对面绕回来的色带；<br>② 忘记关深度测试，全屏三角形因深度值不满足而被丢弃，屏幕一片黑；<br>③ 后处理让之前开的 MSAA 失效（离屏 FBO 默认无多重采样），画面边缘反而变毛糙——需要额外做 MSAA 解析或改用 FXAA/SMAA。</div>
