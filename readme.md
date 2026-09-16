@@ -13,7 +13,9 @@
 | 路径 | 说明 |
 | --- | --- |
 | `learning-documents/WebGL学习手册.html` | 主教材，单文件 3400 行，9 章 + 24 道面试题，自带目录、代码高亮与进度条，双击即可在浏览器里读 |
+| `L1/` | 案例 L1「第一颗三角形」的模块化实现，零依赖（不需要 `gl-matrix`），但同样要走 HTTP |
 | `L3/` | 案例 L3「光照球体与轨道相机」的模块化实现，可直接运行 |
+| `L4/` | 案例 L4「离屏渲染与后处理链」的模块化实现，可直接运行 |
 | `readme.md` | 本文件 |
 
 ## 手册里有什么
@@ -55,9 +57,45 @@ L1和L2比较简单，直接复制代码即可运行观察，所以直接跳到L
 - 光照是逐像素 Blinn-Phong：漫反射 + 高光（指数 96）+ 距离衰减 + 冷色边缘光 + 环境光，最后做 `pow(color, 1/2.2)` 伽马编码输出。
 - 纹理是程序化生成的棋盘格（免外部图片依赖），额外画了两条彩色标记，方便观察球体旋转与 UV 分布；球面横向用了 `REPEAT`，纵向用 `CLAMP_TO_EDGE`。
 
+## L4：离屏渲染与后处理链
+
+L4 = L3 + 一层离屏处理。球体几何、光照着色器、轨道相机**一行没改**（`ball.js`、`camera.js` 与 L3 的 SHA256 完全一致），新增的只有三处：离屏目标、后处理着色器与全屏三角形、把渲染循环拆成两个 Pass。
+
+`main.js` 不再承载任何绘制逻辑，只做装配与编排。
+
+| 文件 | 职责 |
+| --- | --- |
+| `L4/index.html` | 页面骨架，`importmap` 从 CDN 引入 `gl-matrix` |
+| `L4/main.js` | 纯装配 + 编排：建资源，驱动 Pass 1（场景 → 离屏纹理）与 Pass 2（后处理 → 屏幕） |
+| `L4/gl/gl.js` | 四段 GLSL：场景的 `VERT`/`FRAG` + 后处理的 `POST_VERT`/`POST_FRAG` |
+| `L4/render/renderTarget.js` | `createRenderTarget` 建 FBO，`disposeRenderTarget` 释放 |
+| `L4/render/scenePass.js` | 场景 Pass：几何、交错 VBO/VAO、uniform 缓存，画进当前绑定的帧缓冲 |
+| `L4/render/postPass.js` | 后处理 Pass：全屏三角形 + 色差/暗角/灰度，参数可运行时调 |
+| `L4/utils/fullscreen-triangle.js` | 覆盖全屏的三角形，属性位置由调用方传入 |
+| `L4/utils/checkerTexture.js` | 程序化棋盘格纹理（从 `main.js` 里抽出来的） |
+| `L4/utils/ball.js`、`L4/utils/camera.js`、`L4/compile/compile.js` | 与 L3 逐字节相同，未做修改 |
+
+两个 Pass 的状态切换就是这一关的全部难点：
+
+| Pass | 做什么 | 状态要求 |
+| --- | --- | --- |
+| Pass 1 | 绑 FBO → 视口设为离屏尺寸 → 清颜色与深度 → 画球体 | **开**深度测试、**开**背面剔除 |
+| Pass 2 | 绑屏幕 → 视口设为画布尺寸 → 画全屏三角形 | **关**深度测试、**关**背面剔除 |
+
+一条贯穿整关的判断依据：**会被采样的用纹理，只当缓冲区用的用 renderbuffer。** 颜色附件要留给 Pass 2 采样，所以是纹理；深度只需要参与测试、不被采样，所以是 renderbuffer，更省内存。
+
+几处值得留意的地方：
+
+- **离屏目标只建一个。** 手册里建了两个（为乒乓预留），但 L4 是单级后处理链，第二个纯占一整块全屏显存；要做两级模糊时再扩成数组即可。
+- **GL 状态是全局的。** Pass 2 关掉的 `CULL_FACE`，必须在下一帧的 Pass 1 重新打开，否则从第二帧起背面剔除就永久丢了。
+- **全屏三角形的属性位置必须查出来传进去。** `createFullscreenTriangle(gl, attribLocation)`，不要沿用硬编码 `0` 的版本。
+- **相机位置取 `camera.getPosition()`。** 本仓库的 `OrbitCamera.update()` 只写视图矩阵、不返回位置；实测它的返回值是 `undefined`，手册那行 `const cameraPos = camera.update(view)` 在这里会把 `undefined` 送进 `gl.uniform3fv`。
+- **暗角没有直接用 `smoothstep(0.85, 0.25, d)`。** GLSL ES 3.00 规定 `edge0 >= edge1` 时结果是 undefined，各驱动不一定一致；改写成逐点等价的 `1.0 - smoothstep(0.25, 0.85, d)`。
+- **`OFFSCREEN_SCALE` 控制离屏分辨率。** 默认 1；后处理对分辨率不敏感时降到 0.5，填充率直接省掉四分之三。
+
 ## 怎么跑起来
 
-**必须通过 HTTP 打开，不能双击 `index.html`。** 因为 `index.html` 里用了 `type="module"`，并通过 `importmap` 从 jsdelivr CDN 拉 `gl-matrix`，`file://` 协议下会被同源策略拒绝。
+**必须通过 HTTP 打开，不能双击 `index.html`。** 三个案例都用了 `type="module"`，`file://` 协议下模块脚本会被同源策略拒绝；L3、L4 还通过 `importmap` 从 jsdelivr CDN 拉 `gl-matrix`，更需要 HTTP。
 
 在仓库根目录启动一个静态服务器：
 
@@ -67,7 +105,7 @@ npx serve .
 python -m http.server 8080
 ```
 
-然后访问 `http://localhost:3000/L3/`（`serve` 默认端口 3000）或 `http://localhost:8080/L3/`（Python）。也可以先 `cd L3` 再启动，那样访问根路径即可。
+然后访问 `http://localhost:3000/L1/`、`http://localhost:3000/L3/`、`http://localhost:3000/L4/`（`serve` 默认端口 3000）；把端口换成 `8080` 就走 Python 那条。也可以先 `cd L4` 再启动，那样访问根路径即可。
 
 页面操作：**拖拽鼠标环绕观察，滚轮拉近拉远。** 相机极角被限制在 `(0.02, π-0.02)` 之间，距离被限制在 `1.6 ~ 30`，所以不会翻转、也不会穿进球体内部。
 
@@ -81,16 +119,26 @@ python -m http.server 8080
 2. 把 `uAmbientColor` 从 `0.06` 提到 `0.3`：暗部变灰、立体感下降，能直观感受环境光在"偷"对比度。
 3. 把片元输出改成 `outColor = vec4(vUv, 0.0, 1.0);`：直接看到 UV 在球面上的分布，这是排查纹理问题最直观的一招。
 
+L4 的后处理参数可以在控制台实时调（页面把两个 Pass 挂在了 `window.__l4` 上）：
+
+```js
+__l4.setPostParams({ vignette: 0 });                        // 关掉暗角，对比四角是否变亮
+__l4.setPostParams({ aberration: 0.03 });                   // 把色差推到夸张，看边缘的红蓝分离
+__l4.setPostParams({ vignette: 0.65, aberration: 0.004 });  // 还原
+```
+
+想确认离屏链路本身是通的，把 `POST_FRAG` 的 `main` 体整个换成 `outColor = texture(uScene, vUv);`：画面应当与不加后处理时完全一致。一样，说明两遍渲染接得没错，差异全部来自后处理本身；不一样，问题在离屏目标而不在滤镜。
+
 ## 学习进度
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | L1 | 管线、上下文、着色器、缓冲区 | **已按模块化拆分** |
 | L2 | 矩阵与坐标空间、纹理 | 手册 L2 单文件版可直接运行 |
-| L3 | 光照、深度与混合、轨道相机 | **已按模块化拆分L3** |
-| L4 | 帧缓冲、后处理 | 待补，代码尚未落到本仓库 |
+| L3 | 光照、深度与混合、轨道相机 | **已按模块化拆分** |
+| L4 | 帧缓冲、后处理、离屏渲染链 | **已按模块化拆分**，两个 Pass 各自成模块，后处理参数可运行时调 |
 
-L2、L4、L5 的完整代码目前只存在于手册第 5 章，后续会照 L3 的方式逐个重写成目录。
+L2、L5 的完整代码目前只存在于手册第 5 章，后续会照 L1、L3、L4 的方式逐个重写成目录。
 
 ## 面试准备
 

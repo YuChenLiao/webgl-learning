@@ -81,8 +81,11 @@ void main() {
   vec3 color = vec3(r, g, b);
 
   // ---- 暗角：距离中心越远越暗 ----
+  // 手册写的是 smoothstep(0.85, 0.25, d)，但 GLSL ES 3.00 规定
+  // smoothstep 在 edge0 >= edge1 时结果是 undefined，各驱动不一定一致。
+  // 下面这个写法与它逐点等价（smooth(t) = 1 - smooth(1 - t)），且规范安全。
   float d = length(dir);
-  float vignette = smoothstep(0.85, 0.25, d);
+  float vignette = 1.0 - smoothstep(0.25, 0.85, d);
   color *= mix(1.0, vignette, uVignette);
 
   // ---- 灰度混合（示例：饱和度 0.75，保留一点颜色）----
@@ -90,4 +93,4 @@ void main() {
   color = mix(color, vec3(luma), 0.25);
 
   outColor = vec4(color, 1.0);
-}`
+}`;
