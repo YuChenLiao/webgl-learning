@@ -23,11 +23,72 @@
     canvas:active {
       cursor: grabbing;
     }
+
+    /* 后处理开关：左上角悬浮，切换 L3 直出 / L4 后处理链 */
+    .post-toggle {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 9px 13px 9px 12px;
+      border: 1px solid #2b3238;
+      border-radius: 999px;
+      background: rgba(13, 16, 19, .78);
+      backdrop-filter: blur(8px);
+      color: #c8ced4;
+      font: 500 13px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: .02em;
+      cursor: pointer;
+      user-select: none;
+      transition: border-color .18s ease, color .18s ease;
+    }
+
+    .post-toggle:hover {
+      border-color: #3d464e;
+      color: #e6eaee;
+    }
+
+    .post-toggle:focus-visible {
+      outline: 2px solid #0e7490;
+      outline-offset: 2px;
+    }
+
+    /* 状态灯：开后处理时亮橙色，切回直出时熄灭 */
+    .post-toggle i {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #c2410c;
+      box-shadow: 0 0 0 3px rgba(194, 65, 12, .16);
+      transition: background .18s ease, box-shadow .18s ease;
+    }
+
+    .post-toggle[aria-pressed="false"] i {
+      background: #4a545c;
+      box-shadow: none;
+    }
+
+    .post-toggle kbd {
+      padding: 2px 5px;
+      border: 1px solid #323a41;
+      border-radius: 4px;
+      color: #7d8992;
+      font: inherit;
+      font-size: 11px;
+    }
   </style>
 </head>
 
 <body>
   <canvas id="gl"></canvas>
+
+  <button id="post-toggle" class="post-toggle" type="button" aria-pressed="true"
+    title="切换后处理链：关闭即为 L3 的直接渲染路径。注意 L4 始终是两遍渲染，关掉滤镜后与 L3 的唯一差别是球体边缘的抗锯齿（离屏帧缓冲不带 MSAA）">
+    <i></i><span id="post-toggle-label">L4 · 后处理链</span><kbd>P</kbd>
+  </button>
   <!-- importmap 必须出现在任何模块脚本之前，且一个文档只能有一个 -->
   <script type="importmap">
     {

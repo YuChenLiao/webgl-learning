@@ -3,6 +3,7 @@ import createCheckerTexture from './utils/checkerTexture.js';
 import createRenderTarget, { disposeRenderTarget } from './render/renderTarget.js';
 import createScenePass from './render/scenePass.js';
 import createPostPass from './render/postPass.js';
+import createPostToggle from './ui/postToggle.js';
 
 const canvas = document.getElementById('gl');
 const gl = canvas.getContext('webgl2', { alpha: false, antialias: true });
@@ -27,6 +28,16 @@ const camera = new OrbitCamera(canvas, [0, 0, 0]);
 const scenePass = createScenePass(gl, { canvas, camera, baseTexture });
 const postPass = createPostPass(gl, { vignette: 0.65, aberration: 0.004 });
 
+// ---- L3 直出 ↔ L4 后处理链 ----
+// 两个状态共用同一条渲染路径，只改 uPostAmount：0 直接输出离屏纹理（= L3 的画面），
+// 1 走完整的色差 + 暗角 + 灰度。中间值用于切换时的过渡，所以能看清效果是从哪里长出来的。
+let postAmount = 1;
+let postTarget = 1;
+
+const postToggle = createPostToggle({
+  onChange: (on) => { postTarget = on ? 1 : 0; },
+});
+
 // 离屏目标（L4 相对 L3 的第一处新增）。
 // 只建一个：L4 的后处理是单级链，不需要乒乓。真要做两级模糊时，
 // 把这里改成数组、再多建一个，在两个 Pass 之间交替读写即可。
@@ -49,7 +60,16 @@ resize();                                 // 先把 canvas 尺寸定下来，离
 window.addEventListener('resize', onResize);
 resizeTargets();
 
+let lastTime = 0;
+
 function renderFrame(time) {
+  const dt = lastTime ? Math.min((time - lastTime) / 1000, 0.1) : 0;
+  lastTime = time;
+
+  // 指数缓动到目标值，时间常数约 90ms
+  postAmount = postTarget + (postAmount - postTarget) * Math.exp(-dt / 0.09);
+  postPass.setAmount(postAmount);
+
   // ---------- Pass 1：场景 → 离屏纹理 ----------
   gl.bindFramebuffer(gl.FRAMEBUFFER, sceneTarget.framebuffer);
   gl.viewport(0, 0, sceneTarget.width, sceneTarget.height);
@@ -73,6 +93,7 @@ requestAnimationFrame(renderFrame);
 
 // 调试入口：控制台里可以实时调后处理参数，观察每一项的作用
 window.__l4 = {
-  gl, scenePass, postPass, camera,
+  gl, scenePass, postPass, camera, postToggle,
   setPostParams: (p) => postPass.setParams(p),
+  setPostEnabled: (on) => postToggle.setActive(!!on),
 };

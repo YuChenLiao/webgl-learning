@@ -67,11 +67,15 @@ uniform sampler2D uScene;
 uniform vec2 uResolution;
 uniform float uVignette;      // 暗角强度
 uniform float uAberration;    // 色差强度
+uniform float uPostAmount;    // 0 = 直通（等价于 L3 直接渲染），1 = 完整后处理链
 
 out vec4 outColor;
 
 void main() {
   vec2 uv = vUv;
+
+  // 先原样采一份，作为「直出」的基准。uPostAmount 为 0 时输出它就等于 L3 的画面。
+  vec3 base = texture(uScene, uv).rgb;
 
   // ---- 径向色差：R/G/B 三个通道按不同缩放采样 ----
   vec2 dir = uv - 0.5;
@@ -92,5 +96,6 @@ void main() {
   float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
   color = mix(color, vec3(luma), 0.25);
 
-  outColor = vec4(color, 1.0);
+  // 在「后处理结果」与「直通原图」之间插值：0 直出、1 全效果，中间值是切换时的过渡
+  outColor = vec4(mix(base, color, uPostAmount), 1.0);
 }`;
